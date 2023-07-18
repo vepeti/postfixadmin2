@@ -1,0 +1,478 @@
+#! /usr/bin/env python3
+
+import sys
+import os
+import re
+import string
+import random
+import shutil
+import MySQLdb
+import configparser
+import crypt
+import hashlib
+from passlib.hash import md5_crypt
+from passlib.hash import sha1_crypt
+from passlib.hash import sha256_crypt
+from passlib.hash import sha512_crypt
+from dialog import Dialog
+
+
+class MissingConfig(Exception):
+     pass
+
+
+class pfadmin:
+    host=""
+    dbname=""
+    user=""
+    password=""
+
+    password_hash=""
+
+    emails_table=""
+    domains_table=""
+    forwardings_table=""
+    domain_domain_field=""
+    email_email_field=""
+    email_password_field=""
+    email_quota_field=""
+    forward_from_field=""
+    forward_to_field=""
+
+    mail_folder=""
+
+
+    def __init__(self):
+        self.d=Dialog(dialog="dialog", autowidgetsize=True)
+        if os.path.isfile("/etc/postfixadmin2/postfixadmin2.conf"):
+            self.read_config()
+        else:
+            self.d.msgbox("\
+                We didn\'t find config file!\n\
+                \n\
+                Please initialize the config file with answering questions!\n\
+                \n\
+                ", height=9, width=70)
+            self.create_config()
+
+    def random_pass(self,length=16):
+        letters = string.ascii_lowercase+string.ascii_uppercase+string.digits
+        ret = ''.join(random.choice(letters) for i in range(length))
+        return(ret)
+
+    def read_config(self,required_params=15):
+        config_num=0
+        config = configparser.ConfigParser()
+        try:
+            config.read("/etc/postfixadmin2/postfixadmin2.conf")
+
+            for each_section in config.sections():
+                for (each_key, each_val) in config.items(each_section):
+                    config_num=config_num+1
+                    try:
+                        setattr(self, each_key, each_val)
+                    except:
+                        pass
+
+            if config_num<required_params:
+                raise MissingConfig
+
+            try:
+                self.db=MySQLdb.connect(self.host, self.user, self.password, self.dbname)
+                self.dbcursor=self.db.cursor()
+                self.dbcursor=self.db.cursor(MySQLdb.cursors.DictCursor)
+            except MySQLdb.OperationalError:
+                self.d.msgbox("Can not connect to Mysql server! Exiting...", height=5, width=70)
+                os.system("cls" if os.name == "nt" else "clear")
+                exit(1)
+        except configparser.ParsingError:
+            self.d.msgbox("Parse error in config file! Exiting...", height=5, width=70)
+
+        except (configparser.NoSectionError, MissingConfig):
+            self.d.msgbox("Couldn't find all params in the INI file", height=5, width=70)
+            return(self.create_config(True))
+
+        return(self.main_menu())
+
+
+    def create_config(self, ini_exists=False):
+
+        if ini_exists:
+            initmenu=[
+                ("database host:", 1, 1, self.host, 1, 25, 20, 30, 0),
+                ("database name:", 2, 1, self.dbname, 2, 25, 20, 30, 0),
+                ("database user:", 3, 1, self.user, 3, 25, 20, 30, 0),
+                ("database pass:", 4, 1, self.password, 4, 25, 20, 30, 1),
+                ("domains table:", 6, 1, self.domains_table, 6, 25, 20, 30, 0),
+                ("emails table:", 7, 1, self.emails_table, 7, 25, 20, 30, 0),
+                ("forwardings table:", 8, 1, self.forwardings_table, 8, 25, 20, 30, 0),
+                ("domain_domain field:", 10, 1, self.domain_domain_field, 10, 25, 20, 30, 0),
+                ("email_email field:", 11, 1, self.email_email_field, 11, 25, 20, 30, 0),
+                ("email_password field:", 12, 1, self.email_password_field, 12, 25, 20, 30, 1),
+                ("email_quota:", 13, 1, self.email_quota_field, 13, 25, 20, 30, 0),
+                ("forward_from field:", 14, 1, self.forward_from_field, 14, 25, 20, 30, 0),
+                ("forward_to field:", 15, 1, self.forward_to_field, 15, 25, 20, 30, 0),
+                ("mail_folder:", 16, 1, self.mail_folder, 16, 25, 20, 30, 0)
+            ]
+        else:
+            initmenu=[
+                ("database host:", 1, 1, "localhost", 1, 25, 20, 30, 0),
+                ("database name:", 2, 1, "", 2, 25, 20, 30, 0),
+                ("database user:", 3, 1, "", 3, 25, 20, 30, 0),
+                ("database pass:", 4, 1, "", 4, 25, 20, 30, 1),
+                ("domains table:", 6, 1, "domains", 6, 25, 20, 30, 0),
+                ("emails table:", 7, 1, "emails", 7, 25, 20, 30, 0),
+                ("forwardings table:", 8, 1, "forwardings", 8, 25, 20, 30, 0),
+                ("domain_domain field:", 10, 1, "domain", 10, 25, 20, 30, 0),
+                ("email_email field:", 11, 1, "email", 11, 25, 20, 30, 0),
+                ("email_password field:", 12, 1, "password", 12, 25, 20, 30, 1),
+                ("email_quota:", 13, 1, "quota", 13, 25, 20, 30, 0),
+                ("forward_from field:", 14, 1, "source", 14, 25, 20, 30, 0),
+                ("forward_to field:", 15, 1, "destination", 15, 25, 20, 30, 0),
+                ("mail_folder:", 16, 1, "mailfolder", 16, 25, 20, 30, 0)
+            ]
+
+        answers=self.d.mixedform("Database parameters", initmenu, height=22, width=45, form_height=0)
+
+        if answers[0]=="cancel":
+            self.d.msgbox("Bye!", height=5, width=70)
+            os.system("cls" if os.name == "nt" else "clear")
+            exit(0)
+
+        while "" in answers[1]:
+            self.d.msgbox("Can not be empty field!", height=5, width=70)
+            initmenu=[
+                ("database host:", 1, 1, answers[1][0] or self.host, 1, 25, 20, 30, 0),
+                ("database name:", 2, 1, answers[1][1] or self.dbname, 2, 25, 20, 30, 0),
+                ("database user:", 3, 1, answers[1][2] or self.user, 3, 25, 20, 30, 0),
+                ("database pass:", 4, 1, answers[1][3] or self.password, 4, 25, 20, 30, 1),
+                ("domains table:", 6, 1, answers[1][4] or self.domains_table, 6, 25, 20, 30, 0),
+                ("emails table:", 7, 1, answers[1][5] or self.emails_table, 7, 25, 20, 30, 0),
+                ("forwardings table:", 8, 1, answers[1][6] or self.forwardings_table, 8, 25, 20, 30, 0),
+                ("domain_domain field:", 10, 1, answers[1][7] or self.domain_domain_field, 10, 25, 20, 30, 0),
+                ("email_email field:", 11, 1, answers[1][8] or self.email_email_field, 11, 25, 20, 30, 0),
+                ("email_password field:", 12, 1, answers[1][9] or self.email_password_field, 12, 25, 20, 30, 1),
+                ("email_quota:", 13, 1, answers[1][10] or self.email_quota_field, 13, 25, 20, 30, 0),
+                ("forward_from field:", 14, 1, answers[1][11] or self.forward_from_field, 14, 25, 20, 30, 0),
+                ("forward_to field:", 15, 1, answers[1][12] or self.forward_to_field, 15, 25, 20, 30, 0),
+                ("mail folder:", 16, 1, answers[1][13] or self.mail_folder, 15, 25, 20, 30, 0)
+            ]
+
+            answers=self.d.mixedform("Database parameters", initmenu, height=22, width=45, form_height=0)
+
+        if answers[0]=="cancel":
+            self.d.msgbox("Bye!", height=5, width=70)
+            os.system("cls" if os.name == "nt" else "clear")
+            exit(0)
+
+        algos=[
+            ("crypt", "Crypt", 0),
+            ("md5", "Message Digest 5", 0),
+            ("sha1", "Secure Hash Algorhytm", 0),
+            ("sha256", "Secure Hash Algorhytm 256", 0),
+            ("sha512", "Secure Hash Algorhytm 512", 0),
+            ("md5-crypt", "Message Digest 5 with Crypt", 0),
+            ("sha1-crypt", "Secure Hash Algorhytm with Crypt,", 0),
+            ("sha256-crypt", "Secure Hash Algorhytm 256 with Crypt", 0),
+            ("sha512-crypt", "Secure Hash Algorhytm 512 with Crypt", 1)
+        ]
+
+        algo=self.d.radiolist("Hash algorythm", height=16, width=70, list_height=12, choices=algos)
+        config = configparser.ConfigParser()
+
+        config["database"]={}
+        config["database"]["host"]=answers[1][0]
+        config["database"]["dbname"]=answers[1][1]
+        config["database"]["user"]=answers[1][2]
+        config["database"]["password"]=answers[1][3]
+
+        config["database"]["domains_table"]=answers[1][4]
+        config["database"]["emails_table"]=answers[1][5]
+        config["database"]["forwardings_table"]=answers[1][6]
+
+        config["fields"]={}
+        config["fields"]["domain_domain"]=answers[1][7]
+        config["fields"]["email_email"]=answers[1][8]
+        config["fields"]["email_password"]=answers[1][9]
+        config["fields"]["email_quota"]=answers[1][10]
+        config["fields"]["forward_from"]=answers[1][11]
+        config["fields"]["forward_to"]=answers[1][12]
+
+        config["security"]={}
+        config["security"]["password_hash"]=algo[1]
+
+        config["folders"]={}
+        config["folders"]["mail_folder"]=answers[1][13]
+
+        with open("/etc/postfixadmin2/postfixadmin2.conf", "w") as configfile:
+            config.write(configfile)
+
+        self.d.msgbox("The init was successful! Let's start!", height=5, width=70)
+        self.__init__()
+
+
+    def submenu(self):
+        items=[
+            ("Domains", "Domain name"),
+            ("Emails", "E-mail address"),
+            ("Forwardings", "Forwarding rule")
+        ]
+
+        chosen=self.d.menu(self.command[1]+" submenu", height=10, width=70, menu_height=10, choices=items)
+
+        if chosen[0]=="cancel":
+            return(self.main_menu())
+
+        if self.command[1]=="List":
+            self.list_menu(chosen[1])
+        elif self.command[1]=="Add":
+            self.add(chosen[1])
+        elif self.command[1]=="Delete":
+            self.delete(chosen[1])
+
+        return chosen[1]
+
+
+    def passwd(self,email):
+        pass1=self.d.passwordbox("Give new password for "+email+"!", height=None, width=None, init="")
+        if pass1[0]=="cancel":
+            return(self.main_menu())
+
+        pass2=self.d.passwordbox("Confirm new password for "+email+"!", height=None, width=None, init="")
+        if pass2[0]=="cancel":
+            return(self.main_menu())
+
+        password=pass1[1]
+        password2=pass2[1]
+
+        if password==password2:
+            if self.password_hash.lower()=="md5":
+                password=hashlib.md5(password.encode('utf-8')).hexdigest()
+            elif self.password_hash.lower()=="sha1":
+                password=hashlib.sha1(password.encode('utf-8')).hexdigest()
+            elif self.password_hash.lower()=="sha256":
+                password=hashlib.sha256(password.encode('utf-8')).hexdigest()
+            elif self.password_hash.lower()=="sha512":
+                password=hashlib.sha512(password.encode('utf-8')).hexdigest()
+            elif self.password_hash.lower()=="md5-crypt":
+                password=md5_crypt.encrypt(password)
+            elif self.password_hash.lower()=="sha1-crypt":
+                password=sha1_crypt.encrypt(password)
+            elif self.password_hash.lower()=="sha256-crypt":
+                password=sha256_crypt.encrypt(password)
+            elif self.password_hash.lower()=="sha512-crypt":
+                password=sha512_crypt.hash(password)
+            else:
+                password=crypt.crypt(password, password)
+            self.dbcursor.execute("UPDATE "+self.emails_table+" SET "+self.email_password_field+"='"+password+"' WHERE "+self.email_email_field+"='"+email+"'");
+            self.db.commit()
+            self.d.msgbox("Password changed!", height=5, width=70)
+        else:
+            self.d.msgbox("Password mismatch! Password didn't changed.", height=5, width=70)
+        return(self.main_menu())
+
+
+    def list(self,datatype):
+        items=[]
+        if datatype=="Domains":
+            self.dbcursor.execute("SELECT "+self.domain_domain_field+" FROM "+self.domains_table)
+            records=self.dbcursor.fetchall()
+
+            for i in records:
+                items.append((i[self.domain_domain_field], "", 0))
+
+        elif datatype=="Forwardings":
+            self.dbcursor.execute("SELECT * FROM "+self.forwardings_table)
+            records=self.dbcursor.fetchall()
+
+            for i in records:
+                items.append((i[self.forward_from_field], "-> "+i[self.forward_to_field], 0))
+
+        elif datatype=="Emails":
+            self.dbcursor.execute("SELECT "+self.email_email_field+","+self.email_quota_field+" FROM "+self.emails_table)
+            records=self.dbcursor.fetchall()
+
+            for i in records:
+                items.append((i[self.email_email_field], str(int(i[self.email_quota_field]/1024))+" MB", 0))
+
+        return items
+
+
+    def list_menu(self,datatype, multi=False, custom=False):
+
+        if custom:
+            items=self.list(datatype)+[("custom", "-", 0)]
+        else:
+            items=self.list(datatype)
+
+        sorted_items=sorted(items, key=lambda k: k[0])
+
+        if multi:
+            chosen=self.d.checklist("List of "+datatype, height=None, width=None, list_height=None, choices=sorted_items)
+        else:
+            chosen=self.d.radiolist("List of "+datatype, height=None, width=None, list_height=None, choices=sorted_items)
+
+        if chosen[0]=="cancel" or (self.command[1]=="List" and chosen[1]==""):
+            return(self.main_menu())
+        elif chosen[1]=="":
+            self.d.msgbox("No item selected!", height=5, width=70)
+            return(self.main_menu())
+
+        return chosen[1]
+
+
+    def add(self,datatype):
+        if datatype=="Emails":
+            domain=self.list_menu("Domains")
+            user=self.d.inputbox("Enter the new username:", height=None, width=None, init="")
+            email=user[1]+"@"+domain
+            if re.match("^[a-z][a-z0-9.]{1,50}$", user[1]):
+                if any(domain in i for i in self.list("Domains")):
+                    if not any(email in i for i in self.list(datatype)):
+                        quota=self.d.inputbox("Enter the new Email quota in Megabytes:", height=None, width=None, init="1024")
+                        if quota[0]=="cancel":
+                            return(self.main_menu())
+                        if not re.match("^[1-9]\d{0,5}$", quota[1]):
+                            self.d.msgbox("Invalid number!", height=5, width=70)
+                        try:
+                            self.dbcursor.execute("INSERT INTO "+self.emails_table+"("+self.email_email_field+", "+self.email_password_field+", "+self.email_quota_field+") VALUES('"+email+"', '"+self.random_pass()+"', "+str(int(quota[1])*1024)+")");
+                            self.db.commit()
+                        except MySQLdb.IntegrityError:
+                            self.d.msgbox("Insert error!", height=5, width=70)
+                        self.d.msgbox("Mailbox created! Please change the password!", height=5, width=70)
+                        os.mkdir(self.mail_folder+"/"+domain+"/"+user[1], 0o42770)
+                        os.chmod(self.mail_folder+"/"+domain+"/"+user[1], 0o42770)
+                        self.passwd(email)
+                    else:
+                        self.d.msgbox("The mailbox already exists!", height=5, width=70)
+                else:
+                    self.d.msgbox("The domain doesn't exists! Please create it first!", height=5, width=70)
+            else:
+                self.d.msgbox("Invalid email format!", height=5, width=70)
+        elif datatype=="Domains":
+            domain=self.d.inputbox("Enter the new Domain:", height=None, width=None, init="")
+            if re.match("^[a-z0-9-]{2,}\.[a-z]{2,4}$", domain[1]):
+                if not any(domain[1] in i for i in self.list("Domains")):
+                    try:
+                        self.dbcursor.execute("INSERT INTO "+self.domains_table+"("+self.domain_domain_field+") VALUES('"+domain[1]+"')")
+                        self.db.commit()
+                        self.d.msgbox("New Domain created!", height=5, width=70)
+                        os.mkdir(self.mail_folder+"/"+domain[1], 0o42770)
+                        os.chmod(self.mail_folder+"/"+domain[1], 0o42770)
+                    except MySQLdb.IntegrityError:
+                        self.d.msgbox("Insert failed!", height=5, width=70)
+                else:
+                    self.d.msgbox("Domain already exists!", height=5, width=70)
+            else:
+                self.d.msgbox("Invalid Domain format!", height=5, width=70)
+        elif datatype=="Forwardings":
+            from_domain=self.list_menu("Domains")
+            from_user=self.d.inputbox("Enter the Mail alias:", height=None, width=None, init="")
+            from_mail=from_user[1]+"@"+from_domain
+            to_mailbox=self.list_menu("Emails",True,True)
+            if "custom" in to_mailbox:
+                to_mailbox=self.d.inputbox("Enter the destination mail addresses with commas:", height=None, width=None, init="")[1].split(",")
+
+            confirm=self.d.yesno(from_mail+" -> "+",".join(to_mailbox)+"\nIs it correct?", height=None, width=None)
+            if confirm=="ok":
+                self.dbcursor.execute("INSERT INTO "+self.forwardings_table+"("+self.forward_from_field+", "+self.forward_to_field+") VALUES('"+from_mail+"', '"+",".join(to_mailbox)+"')")
+                self.db.commit()
+                self.d.msgbox("Forward rule created!", height=5, width=70)
+        return(self.main_menu())
+
+    def delete(self,datatype):
+        if datatype=="Emails":
+            email=self.list_menu(datatype,True)
+#            user,domain=email.rstrip().split("@")
+            if email:
+                emaillist="'" + "','".join(email) + "'"
+                deluser=self.d.yesno("Are you sure to delete "+emaillist+" Mailbox?", height=None, width=None)
+                if deluser=="ok":
+                    self.dbcursor.execute("DELETE FROM "+self.emails_table+" WHERE "+self.email_email_field+" IN ("+emaillist+")")
+                    self.dbcursor.execute("DELETE FROM "+self.forwardings_table+" WHERE "+self.forward_to_field+" IN ("+emaillist+")")
+                    self.db.commit()
+                    self.d.msgbox("Mailbox(es) deleted!", height=5, width=70)
+                    deldir=self.d.yesno("Do you want to delete mail folder(s) too?", height=None, width=None)
+                    if deldir=="ok":
+                        for item in email:
+                            self.d.msgbox(item, height=5, width=70)
+                            user,domain=item.rstrip().split("@")
+                            try:
+                                shutil.rmtree(self.mail_folder+"/"+domain+"/"+user)
+                            except:
+                                pass
+                        self.d.msgbox("Mail folders deleted!", height=5, width=70)
+        elif datatype=="Domains":
+            domain=self.list_menu(datatype,True)
+            if domain:
+                domainlist="'" + "','".join(domain) + "'"
+                deldomain=self.d.yesno("Are you sure to delete "+domainlist+" Domain(s)?", height=None, width=None)
+                if deldomain=="ok":
+                    self.dbcursor.execute("DELETE FROM "+self.domains_table+" WHERE "+self.domain_domain_field+" IN ("+domainlist+")")
+                    self.db.commit()
+                    self.d.msgbox("Domain(s) deleted!", height=5, width=70)
+                    deldir=self.d.yesno("Do you want to delete mail folder(s) too?", height=None, width=None)
+                    if deldir=="ok":
+                        for i in domain:
+                            try:
+                                shutil.rmtree(self.mail_folder+"/"+i)
+                            except:
+                                pass
+        elif datatype=="Forwardings":
+            forwarding=self.list_menu(datatype,True)
+            if forwarding:
+                forwardinglist="'" + "','".join(forwarding) + "'"
+                delforwarding=self.d.yesno("Are you sure to delete "+forwardinglist+" Forward rule(s)?", height=None, width=None)
+                if delforwarding=="ok":
+                    self.dbcursor.execute("DELETE FROM "+self.forwardings_table+" WHERE "+self.forward_from_field+" IN ("+forwardinglist+")")
+                    self.db.commit()
+                    self.d.msgbox("Forward rule(s) deleted!", height=5, width=70)
+
+        return(self.main_menu())
+
+
+    def quota(self,email):
+        self.dbcursor.execute("SELECT "+self.email_quota_field+" FROM "+self.emails_table+" WHERE "+self.email_email_field+"='"+email+"'")
+        current_quota=str(int(self.dbcursor.fetchall()[0][self.email_quota_field]/1024))
+        print(current_quota)
+        new_quota=self.d.inputbox("Change Quota for "+email+" in Megabytes:", height=None, width=None, init=current_quota)
+
+        if re.match("^[1-9]\d{0,5}$", new_quota[1]):
+            self.dbcursor.execute("UPDATE "+self.emails_table+" SET "+self.email_quota_field+"="+str(int(new_quota[1])*1024)+" WHERE "+self.email_email_field+"='"+email+"'");
+            self.db.commit()
+            self.d.msgbox("Quota changed!", height=5, width=70)
+        else:
+            self.d.msgbox("Invalid number!", height=5, width=70)
+
+        return(self.main_menu())
+
+
+    def main_menu(self):
+        items=[
+            ("Add", "Add new email box, domain or forwarding"),
+            ("Delete", "Delete existing email box, domain or forwarding"),
+            ("List", "List emails, domains or forwardings"),
+            ("Quota", "Change quota for existing mailbox"),
+            ("Passwd", "Change password for existing mailbox")
+        ]
+
+        self.command=self.d.menu("Postfixadmin main menu", height=12, width=70, menu_height=11, choices=items)
+
+        if self.command[0]=="cancel":
+            self.d.msgbox("Bye!", height=5, width=70)
+            os.system("cls" if os.name == "nt" else "clear")
+            exit(0)
+
+        elif self.command[1] in ["Add", "Delete", "List"]:
+            chosen2=self.submenu()
+        elif self.command[1]=="Passwd":
+            chosen2=self.list_menu("Emails")
+            self.passwd(chosen2)
+        elif self.command[1]=="Quota":
+            chosen2=self.list_menu("Emails")
+            self.quota(chosen2)
+
+
+# MAIN
+
+pfa=pfadmin()
