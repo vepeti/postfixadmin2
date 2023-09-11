@@ -191,18 +191,21 @@ class pfadmin:
         config["database"]["forwardings_table"]=answers[1][6]
 
         config["fields"]={}
-        config["fields"]["domain_domain"]=answers[1][7]
-        config["fields"]["email_email"]=answers[1][8]
-        config["fields"]["email_password"]=answers[1][9]
-        config["fields"]["email_quota"]=answers[1][10]
-        config["fields"]["forward_from"]=answers[1][11]
-        config["fields"]["forward_to"]=answers[1][12]
+        config["fields"]["domain_domain_field"]=answers[1][7]
+        config["fields"]["email_email_field"]=answers[1][8]
+        config["fields"]["email_password_field"]=answers[1][9]
+        config["fields"]["email_quota_field"]=answers[1][10]
+        config["fields"]["forward_from_field"]=answers[1][11]
+        config["fields"]["forward_to_field"]=answers[1][12]
 
         config["security"]={}
         config["security"]["password_hash"]=algo[1]
 
         config["folders"]={}
         config["folders"]["mail_folder"]=answers[1][13]
+
+        if not os.path.exists('/etc/postfixadmin2'):
+            os.makedirs('/etc/postfixadmin2')
 
         with open("/etc/postfixadmin2/postfixadmin2.conf", "w") as configfile:
             config.write(configfile)
